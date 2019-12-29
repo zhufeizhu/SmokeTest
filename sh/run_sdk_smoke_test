@@ -1,0 +1,102 @@
+#!/usr/bin/env python
+# Copyright 2019 The Bytedance Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import argparse
+import logging
+import os
+import shutil
+import sys
+import signal
+import time
+import Queue
+import parse.icustomerunner
+
+
+class SmokeTestRunner(parse.icustomerunner.ICustomRunner):
+    def __init__(self, taskInfo, uiDriver):
+        parse.icustomerunner.ICustomRunner.__init__(self, taskInfo, uiDriver)
+
+    logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',
+                        level=logging.INFO,
+                        datefmt='%Y-%m-%d %H:%M:%S')
+    
+    def logger(content, log_file_path='', level='info'):
+        if log_file_path:
+            if not os.path.exists(os.path.dirname(log_file_path)):
+                os.makedirs(os.path.dirname(log_file_path))
+            os.system('echo %s >> %s' % (content, log_file_path))
+        if level == 'info':
+            logging.info(content)
+        elif level == 'warn':
+            logging.warning(content)
+        else:
+            logging.error(content)
+
+    def install_apk(self):
+        #通过创建任务时的custom来传递要下载的debug和androidTest包
+        Debug_Apk_DownloadUrl = self.taskInfo.custom['Debug_Apk_DownloadUrl']
+        AndroidTest_Apk_DownloadUrl = self.taskInfo.custom['AndroidTest_Apk_DownloadUrl']
+
+        #通过url来获取对应的apk包
+        Debug_Apk_Path = self.downloadFiles(Debug_Apk_DownloadUrl, 'app-debug.apk')
+        AndroidTest_Apk_Path = self.downloadFiles(AndroidTest_Apk_DownloadUrl,'app-debug-androidTest.apk')
+
+        #安装Debug和AndroidTest包
+        booleanInstallResult = self.installThirdApk(Debug_Apk_Path)
+        if booleanInstallResult != True:
+            log_error = 'install SmokeTest app-debug.apk failed' 
+            logger(content=log_error, log_file_path=OUTPUT_FILE_PATH, level="error")
+        
+        booleanInstallResult = self.installThirdApk(AndroidTest_Apk_Path)
+        if booleanInstallResult != True:
+            log_error = 'install SmokeTest app-debug-androidTest.apk failed' 
+            logger(content=log_error, log_file_path=OUTPUT_FILE_PATH, level="error")
+        
+        return 0
+
+    def prepare(self):
+        #做执行smokeTest之前的准备工作，主要是检查是否有写的权限    
+        grant_read_permission = 'pm grant com.bytedance.ttwebview.shell android.permission.READ_EXTERNAL_STORAGE'
+        grant_write_permission = 'pm grant com.bytedance.ttwebview.shell android.permission.WRITE_EXTERNAL_STORAGE'
+        self.uiDriver.adb.shell(grant_read_permission)
+        self.uiDriver.adb.shell(grant_write_permission)
+        return 0
+
+    #跑指定的class的case
+    def run_ut(self,device,test_class,test_case):
+        run_cmd = 'am instrument -w -r   -e debug false -e class \'com.bytedance.ttwebview.shell.%s#%s\' com.bytedance.ttwebview.shell.test/android.support.test.runner.AndroidJUnitRunner' % (test_class,test_case)
+        self.uiDriver.adb.shell(run_cmd)
+        return 0
+
+    def testSmoke(self):
+        #安装相关apk
+        install_apk(self)
+        #给apk赋相关存储权限
+        prepare(self)
+
+    try:   
+        start_time = time.time()
+        logger('***********start run ttwebview sdk smoke test***********')
+        
+        test_list = ['SmokeTest','DownloadUtilsTest']
+
+        smoke_ut = [
+            'prepare_Smoke',
+            'Smoke_Test_Load',
+            'Smoke_Test_Download', 
+            'Smoke_Test_LoadUrl'
+        ]  
+        test_so_amount = self.taskInfo.custom['test_so_amount']
+        i = 0
+        while i <= test_so_amount:
+            if i == 0:
+                run_ut(self,devices[0],test_list[0],smoke_ut[0])
+            run_ut(slef,devices[0],test_list[0],smoke_ut[1])
+            if i != test_so_amount:
+                run_ut(self,devices[0],test_list[0],smoke_ut[2])
+            run_ut(devices[0],test_list[0],smoke_ut[3]) 
+            i = i + 1
+    finally:
+        logger('***********end running ttwebview sdk smoke test, time: %ds***********' % (time.time() - start_time))
